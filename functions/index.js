@@ -54,6 +54,11 @@ const monthNames = [
   "December",
 ];
 
+const runtimeOpts = {
+  timeoutSeconds: 540,
+  memory: "2GB",
+};
+
 function formatAMPM(date) {
   var hours = date.getHours();
   var minutes = date.getMinutes();
@@ -630,7 +635,7 @@ exports.taskRunner = functions
 
 exports.takesgSync = functions
   .region("asia-east2")
-  .runWith({ memory: "2GB" })
+  .runWith(runtimeOpts)
   .pubsub.schedule("every 24 hours")
   .onRun(async (context) => {
     var take_keys = [];
@@ -666,14 +671,17 @@ exports.takesgSync = functions
       .then((snapshot) => {
         snapshot.forEach(async (d) => {
           var data_contact = "65" + d.data().contact;
-          // var hasTakesgDescription = d
-          //   .data()
-          //   .description_detail.includes("Contributed by take.sg");
           var inTakesg = take_keys.includes(data_contact);
-          if (inTakesg) {
+          if (inTakesg && d.data().takesg) {
             var index = take_keys.indexOf(data_contact);
             var data = take_data[index];
-            d.ref
+            var delivery_detail = data.free_delivery
+              ? "Free delivery spend: $" + data.free_delivery + "\n"
+              : "";
+            delivery_detail = data.minimum_order
+              ? delivery_detail + "Minimum order: $" + data.minimum_order
+              : delivery_detail;
+            await d.ref
               .update({
                 description_detail: data.description
                   ? data.description + "\n Contributed by take.sg"
@@ -684,6 +692,8 @@ exports.takesgSync = functions
                 menu_combined: data.menus ? data.menus : "",
                 tagsValue: data.tags ? data.tags : "",
                 menu: true,
+                minimum_order: data.minimum_order ? data.minimum_order : 0,
+                free_delivery: data.free_delivery ? data.free_delivery : 0,
               })
               .then((d) => {
                 console.log("Updated: " + data.name);

@@ -5,7 +5,7 @@
 
 import React, { Fragment } from "react";
 import "../App.css";
-import { db, storage, geo } from "./Firestore";
+import { db, storage, geo, uiConfigPage } from "./Firestore";
 import { Button, Form, Spinner } from "react-bootstrap";
 import logo from "../mrt_logo.png";
 import Select from "react-select";
@@ -16,10 +16,19 @@ import CreatableSelect from "react-select/creatable";
 import firebase from "./Firestore";
 import { withRouter } from "react-router-dom";
 import { LanguageContext } from "./themeContext";
+import Dialog from "@material-ui/core/Dialog";
+import DialogActions from "@material-ui/core/DialogActions";
+import DialogContent from "@material-ui/core/DialogContent";
+import DialogContentText from "@material-ui/core/DialogContentText";
+import DialogTitle from "@material-ui/core/DialogTitle";
+import TextField from "@material-ui/core/TextField";
+import InputAdornment from "@material-ui/core/InputAdornment";
+import StyledFirebaseAuth from "react-firebaseui/StyledFirebaseAuth";
+
 // const API_KEY = `${process.env.REACT_APP_GKEY}`
 
 import _ from "lodash";
-
+const admin = `${process.env.REACT_APP_ADMIN}`;
 const analytics = firebase.analytics();
 
 function onClick(name) {
@@ -60,6 +69,55 @@ const icon = (
     </svg>
   </div>
 );
+
+const createDomain = async (name, id, cover, uid) => {
+  return db
+    .collection("pages")
+    .doc(name)
+    .set({
+      css: { menu_color: "", menu_font_color: "" },
+      docid: id,
+      logo: "",
+      cover: cover,
+      delivery_option: "none"
+    })
+    .then(async () => {
+      await db
+        .collection("pages")
+        .doc(name)
+        .collection("users")
+        .doc(uid)
+        .set({
+          role: "admin",
+        })
+        .catch((e) => {
+          console.log(e);
+        });
+      await db
+        .collection("pages")
+        .doc(name)
+        .collection("users")
+        .doc(admin)
+        .set({
+          role: "admin",
+        })
+        .catch((e) => {
+          console.log(e);
+        });
+      await db
+        .collection("hawkers")
+        .doc(id)
+        .update({
+          custom: true,
+        })
+        .catch((e) => {
+          console.log(e);
+        });
+    })
+    .catch((e) => {
+      console.log(e);
+    });
+};
 
 const handleData = async ({
   url,
@@ -103,6 +161,12 @@ const handleData = async ({
   tagsValue,
   editedFields,
   originalName,
+  takesg,
+  option,
+  uid,
+  minimum_order,
+  free_delivery,
+  website_name,
 }) => {
   let now = new Date();
   var field = {
@@ -145,16 +209,24 @@ const handleData = async ({
     location: location,
     menu_combined: menu_combined,
     tagsValue: tagsValue,
+    takesg: takesg,
+    minimum_order: minimum_order,
+    free_delivery: free_delivery,
   };
   if (toggle === "create") {
+    console.log(field);
     let id = await db
       .collection("hawkers")
       .add({
         ...field,
         claps: 0,
+        custom: false,
       })
-      .then(function (docRef) {
+      .then(async (docRef) => {
         console.log(docRef.id);
+        if (option === "website") {
+          await createDomain(website_name, docRef.id, url, uid);
+        }
         return docRef.id;
       })
       .catch(function (error) {
@@ -242,6 +314,13 @@ export class ListForm extends React.Component {
       tagsValue: [],
       tags: [],
       isLoading: false,
+      takesg: false,
+      dialogOpen: false,
+      website_name: "",
+      available: null,
+      firebaseUser: "",
+      minimum_order: 0,
+      free_delivery: 0,
     };
 
     this.initialState = {};
@@ -254,6 +333,36 @@ export class ListForm extends React.Component {
     // this.handleImageAsFile = this.handleImageAsFile.bind(this);
     this.handleFireBaseUpload = this.handleFireBaseUpload.bind(this);
     this.handleClear = this.handleClear.bind(this);
+  }
+
+  componentDidMount() {
+    firebase.auth().useDeviceLanguage();
+    // window.recaptchaVerifier = new firebase.auth.RecaptchaVerifier(
+    //   "recaptcha-container",
+    //   {
+    //     size: "invisible",
+    //     callback: function (response) {
+    //       // reCAPTCHA solved
+    //     },
+    //   }
+    // );
+
+    firebase.auth().onAuthStateChanged(
+      function (user) {
+        if (user) {
+          // User is signed in, set state
+          // More auth information can be obtained here but for verification purposes, we just need to know user signed in
+          console.log(user);
+          this.setState({
+            firebaseUser: user,
+            displayName: user.displayName,
+            email: user.email ? user.email : null,
+          });
+        } else {
+          // No user is signed in.
+        }
+      }.bind(this)
+    );
   }
 
   getInitialState() {
@@ -305,6 +414,8 @@ export class ListForm extends React.Component {
       menu: this.props.data.menu,
       menu_combined: this.props.data.menu_combined,
       wechatid: this.props.data.wechatid ? this.props.data.wechatid : "",
+      takesg: this.props.data.takesg ? this.props.data.takesg : false,
+      newId: "",
     };
 
     return _.cloneDeep(initialState);
@@ -419,6 +530,21 @@ export class ListForm extends React.Component {
 
   handleSubmit = async (event) => {
     event.preventDefault();
+    // Early exit if no account created and no website name
+    if (this.props.option === "website" && !this.state.firebaseUser) {
+      alert("Please create account");
+      return;
+    }
+    if (
+      this.props.option === "website" &&
+      !this.state.website_name &&
+      !this.state.available &&
+      this.state.available === null
+    ) {
+      alert("Please enter a valid website name");
+      return;
+    }
+
     this.getPostal(this.state.postal);
     // removing since menu_combined should be ground truth instead of menuitem, menuprice
     // let menu_combined = this.state.menuitem.map((item, index) => {
@@ -445,13 +571,12 @@ export class ListForm extends React.Component {
         price: "",
       });
     }
-
+    this.setState({ isLoading: true });
     let edited_fields = [];
     if (this.props.toggle === "create") {
       onClick("create_submit_click");
     } else {
       onClick("edit_submit_click");
-      this.setState({ isLoading: true });
       edited_fields = this.getEditedFields();
     }
 
@@ -501,12 +626,19 @@ export class ListForm extends React.Component {
       tagsValue: this.state.tagsValue.map((v) => v.label.trim()),
       editedFields: edited_fields,
       originalName: this.initialState.name,
+      takesg: this.state.takesg,
+      option: this.props.option,
+      uid: this.state.firebaseUser.uid,
+      free_delivery: this.state.free_delivery,
+      minimum_order: this.state.minimum_order,
+      website_name: this.state.website_name,
     }).then((id) => {
       if (this.props.toggle === "create") {
-        this.props.history.push({
-          pathname: "/info",
-          search: "?id=" + id,
-        });
+        // this.props.history.push({
+        //   pathname: "/info",
+        //   search: "?id=" + id,
+        // });
+        this.setState({ newId: id, dialogOpen: true, isLoading: false });
       } else if (this.props.toggle === "edit") {
         this.setState({ isLoading: false });
 
@@ -572,9 +704,41 @@ export class ListForm extends React.Component {
         menu_combined: current,
       });
       this.saveStateToLocalStorage("menu_combined", current);
+    } else if (name === "website_name") {
+      this.setState({
+        website_name: event.target.value.toLowerCase(),
+        available: null,
+      });
+      this.saveStateToLocalStorage(name, value);
     } else {
       this.setState({ [name]: value });
       this.saveStateToLocalStorage(name, value);
+    }
+  };
+
+  checkAvailable = async () => {
+    if (
+      this.state.website_name !== "" &&
+      this.state.website_name !== null &&
+      /[^\w]|_|\s/g.test(this.state.website_name) !== true
+    ) {
+      this.setState({ invalid: false });
+      await db
+        .collection("pages")
+        .doc(this.state.website_name)
+        .get()
+        .then((snapshot) => {
+          if (snapshot.exists) {
+            this.setState({ available: false });
+          } else {
+            this.setState({ available: true });
+          }
+        })
+        .catch((error) => {
+          console.log(error);
+        });
+    } else {
+      this.setState({ invalid: true });
     }
   };
 
@@ -733,7 +897,6 @@ export class ListForm extends React.Component {
     // let current = new Set();
     fireData.forEach(function (doc) {
       if (doc.exists) {
-        console.log(doc.data());
         var d = doc.data();
         data_cuisine.push(d);
       }
@@ -783,7 +946,6 @@ export class ListForm extends React.Component {
         .then(Helpers.mapSnapshotToDocs);
       this.setState({ tags: tags });
       this.initialState["tags"] = _.cloneDeep(tags);
-      console.log(this.state.tags);
     } catch (error) {
       console.log("Error getting document:", error);
     }
@@ -968,10 +1130,71 @@ export class ListForm extends React.Component {
     );
   };
 
+  handleClose = () => {
+    this.setState({ dialogOpen: false });
+  };
+
   render({ apiReady, maps, map } = this.state) {
     return (
       <div>
         <Form onSubmit={this.handleSubmit.bind(this)}>
+          <Dialog
+            open={this.state.dialogOpen}
+            onClose={this.handleClose}
+            aria-labelledby="alert-dialog-title"
+            aria-describedby="alert-dialog-description"
+          >
+            <DialogTitle id="alert-dialog-title">
+              {"Listing Successfully Created! "}
+            </DialogTitle>
+            <DialogContent>
+              <DialogContentText id="alert-dialog-description">
+                <h4 style={{ color: "green" }}>Success! </h4>
+                <h5>
+                  Your listing can be found here:{" "}
+                  <a href={"/info?id=" + this.state.newId} target="blank">
+                    www.foodleh.app/info?id={this.state.newId}
+                  </a>
+                </h5>
+              </DialogContentText>
+              {this.props.option === "website" ? (
+                <DialogContentText id="alert-dialog-description">
+                  <div style={{ wordWrap: "break-word" }}>
+                    <h5>
+                      Website created at{" "}
+                      <a
+                        href={
+                          "https://" + this.state.website_name + ".foodleh.app"
+                        }
+                        target="blank"
+                      >
+                        https://{this.state.website_name}.foodleh.app
+                      </a>
+                    </h5>
+                    <h5>
+                      Edit website at:{" "}
+                      <a
+                        href={
+                          "https://" +
+                          this.state.website_name +
+                          ".foodleh.app/dashboard"
+                        }
+                        target="blank"
+                      >
+                        https://{this.state.website_name}.foodleh.app/dashboard
+                      </a>
+                    </h5>
+                  </div>
+                </DialogContentText>
+              ) : null}
+            </DialogContent>
+            <DialogActions>
+              <Button onClick={this.handleClose} color="primary">
+                Close
+              </Button>
+            </DialogActions>
+          </Dialog>
+
           <div class="row">
             <div class="col">
               <div
@@ -1399,8 +1622,8 @@ export class ListForm extends React.Component {
                                 name="contact"
                                 placeholder="9xxxxxxx"
                                 maxLength="8"
-                                minlength="8"
-                                pattern="[6-9]{1}[0-9]{7}"
+                                // minlength="8"
+                                // pattern="[6-9]{1}[0-9]{7}"
                                 required
                               ></input>
                             </div>
@@ -1592,6 +1815,53 @@ export class ListForm extends React.Component {
                                       </div>
                                     </div>
                                     <div class="form-group create-title">
+                                      <label for="unit">
+                                        {context.data.create.free_delivery}
+                                      </label>
+                                      <div class="input-group">
+                                        <div class="input-group-prepend">
+                                          <span
+                                            class="input-group-text"
+                                            id="basic-addon1"
+                                          >
+                                            $
+                                          </span>
+                                        </div>
+                                        <input
+                                          onChange={this.handleChange}
+                                          value={this.state.free_delivery}
+                                          type="number"
+                                          class="form-control"
+                                          name="free_delivery"
+                                          placeholder="e.g. 20"
+                                        ></input>
+                                      </div>
+                                    </div>
+                                    <div class="form-group create-title">
+                                      <label for="unit">
+                                        {context.data.create.minumum_order}
+                                      </label>
+                                      <div class="input-group">
+                                        <div class="input-group-prepend">
+                                          <span
+                                            class="input-group-text"
+                                            id="basic-addon1"
+                                          >
+                                            $
+                                          </span>
+                                        </div>
+                                        <input
+                                          onChange={this.handleChange}
+                                          value={this.state.minumum_order}
+                                          type="number"
+                                          class="form-control"
+                                          name="minumum_order"
+                                          placeholder="e.g. 20"
+                                        ></input>
+                                      </div>
+                                    </div>
+
+                                    <div class="form-group create-title">
                                       <label for="delivery_detail">
                                         {context.data.create.deliverydetails}{" "}
                                       </label>
@@ -1613,6 +1883,40 @@ export class ListForm extends React.Component {
                                 <br />
                               </div>
                             )}
+                            <div class="create-title">
+                              <Button
+                                class="shadow-sm"
+                                style={{
+                                  backgroundColor: "blue",
+                                  borderColor: "blue",
+                                }}
+                                onClick={this.handleMenu}
+                                name="menu"
+                              >
+                                {context.data.create.additem}
+                              </Button>
+                              <br />
+                            </div>
+                            {this.state.menu ? (
+                              <div>
+                                <p>{this.handleMenuDisplay(context)} </p>
+                                {/* Option to add additional menu items, display only if menu is already shown */}
+                                <div class="create-title">
+                                  <Button
+                                    class="shadow-sm"
+                                    style={{
+                                      backgroundColor: "blue",
+                                      borderColor: "blue",
+                                    }}
+                                    onClick={this.handleMenu}
+                                    name="moreMenuItems"
+                                  >
+                                    {context.data.create.addmoreitem}
+                                  </Button>
+                                  <br />
+                                </div>
+                              </div>
+                            ) : null}
                           </div>
                           <hr
                             style={{
@@ -1713,40 +2017,6 @@ export class ListForm extends React.Component {
                               rows="3"
                             ></textarea>
                           </div>
-                          <div class="create-title">
-                            <Button
-                              class="shadow-sm"
-                              style={{
-                                backgroundColor: "blue",
-                                borderColor: "blue",
-                              }}
-                              onClick={this.handleMenu}
-                              name="menu"
-                            >
-                              {context.data.create.additem}
-                            </Button>
-                            <br />
-                          </div>
-                          {this.state.menu ? (
-                            <div>
-                              <p>{this.handleMenuDisplay(context)} </p>
-                              {/* Option to add additional menu items, display only if menu is already shown */}
-                              <div class="create-title">
-                                <Button
-                                  class="shadow-sm"
-                                  style={{
-                                    backgroundColor: "blue",
-                                    borderColor: "blue",
-                                  }}
-                                  onClick={this.handleMenu}
-                                  name="moreMenuItems"
-                                >
-                                  {context.data.create.addmoreitem}
-                                </Button>
-                                <br />
-                              </div>
-                            </div>
-                          ) : null}
                           <br />
                           <div class="form-group create-title">
                             <label for="unit">WeChat ID(微信号): </label>
@@ -1816,6 +2086,154 @@ export class ListForm extends React.Component {
                               <br />
                             </div>
                           </div>
+                          <hr
+                            style={{
+                              color: "black",
+                              backgroundColor: "black",
+                              height: 3,
+                            }}
+                          />{" "}
+                          {this.props.option === "website" ? (
+                            <React.Fragment>
+                              <h5 class="card-title create-title">
+                                Step 3: Create website (required)
+                              </h5>
+                              <div class="form-group create-title">
+                                <div>
+                                  <label for="website">
+                                    What your website can look like:{" "}
+                                    <a
+                                      target="blank"
+                                      href="https://shidefu.foodleh.app"
+                                    >
+                                      shidefu.foodleh.app
+                                    </a>
+                                  </label>
+                                </div>
+                              </div>
+                              <div class="form-group create-title">
+                                <div>
+                                  <label for="website">
+                                    Choose your website link name
+                                  </label>
+                                </div>
+                                <div>
+                                  <TextField
+                                    label="Name"
+                                    name="website_name"
+                                    placeholder="e.g. huathuat"
+                                    InputProps={{
+                                      endAdornment: (
+                                        <InputAdornment position="end">
+                                          .foodleh.app
+                                        </InputAdornment>
+                                      ),
+                                    }}
+                                    value={this.state.website_name}
+                                    onChange={this.handleChange}
+                                  />
+                                  <Button
+                                    onClick={this.checkAvailable}
+                                    variant="contained"
+                                    color={"primary"}
+                                    style={{
+                                      backgroundColor: "#b48300",
+                                      borderColor: "#b48300",
+                                      color: "white",
+                                      margin: "10px",
+                                    }}
+                                  >
+                                    Check Availability
+                                  </Button>
+                                  {this.state.invalid ? (
+                                    <div style={{ color: "red" }}>
+                                      Must not be empty, contain spaces, or
+                                      contain punctuation.
+                                    </div>
+                                  ) : null}
+                                  {this.state.available !== null ? (
+                                    <div>
+                                      {this.state.available ? (
+                                        <div style={{ color: "green" }}>
+                                          {this.state.website_name}.foodleh.app
+                                          is <b>Available</b>
+                                        </div>
+                                      ) : (
+                                        <div style={{ color: "red" }}>
+                                          {this.state.website_name}.foodleh.app
+                                          is <b>Not Available</b>
+                                        </div>
+                                      )}
+                                    </div>
+                                  ) : null}
+                                </div>
+                              </div>
+                              <div class="form-group create-title">
+                                <label>
+                                  Create your account to modify your website
+                                </label>
+                                {this.state.firebaseUser ? (
+                                  <div style={{ color: "green" }}>
+                                    <p>
+                                      <b>
+                                        Verified: <br />
+                                        {this.state.firebaseUser.displayName}
+                                        <br />
+                                        {this.state.firebaseUser.email}
+                                        <br />
+                                        <Button
+                                          variant="contained"
+                                          onClick={() => {
+                                            firebase.auth().signOut();
+                                            this.setState({
+                                              firebaseUser: null,
+                                            });
+                                          }}
+                                          style={{
+                                            backgroundColor: "grey",
+                                            borderColor: "grey",
+                                            color: "white",
+                                            margin: "10px",
+                                          }}
+                                        >
+                                          Sign-out
+                                        </Button>
+                                      </b>
+                                    </p>
+                                  </div>
+                                ) : (
+                                  <div>
+                                    {!this.state.login && (
+                                      <div>
+                                        <Button
+                                          color="primary"
+                                          variant="contained"
+                                          onClick={() =>
+                                            this.setState({ login: true })
+                                          }
+                                          style={{
+                                            backgroundColor: "#b48300",
+                                            borderColor: "#b48300",
+                                            color: "white",
+                                            margin: "10px",
+                                          }}
+                                        >
+                                          Create Account/ Login
+                                        </Button>
+                                      </div>
+                                    )}
+                                    {this.state.login && (
+                                      <StyledFirebaseAuth
+                                        uiConfig={uiConfigPage}
+                                        firebaseAuth={firebase.auth()}
+                                      />
+                                    )}
+                                    <br />
+                                  </div>
+                                )}
+                              </div>
+                            </React.Fragment>
+                          ) : null}
                           <div
                             class="card shadow d-block d-md-none"
                             style={{ width: "100%", "margin-top": "10px" }}
@@ -1843,6 +2261,22 @@ export class ListForm extends React.Component {
                           </div>
                           <br />
                           <div class="create-title">
+                            {this.props.toggle === "edit" ? (
+                              <span>
+                                <b>
+                                  To protect our owners, edits will be manually
+                                  reviewed and implemented within 24 hours.
+                                </b>
+                                <br />
+                              </span>
+                            ) : null}
+                            <div>
+                              By listing via this platform, you agree to our{" "}
+                              <a href="https://foodleh.app/privacy">
+                                Privacy Policy
+                              </a>
+                            </div>
+                            <br />
                             <Button
                               class="shadow-sm"
                               style={{

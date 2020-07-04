@@ -6,7 +6,7 @@
 import React from "react";
 import "../App.css";
 import Item from "./Item";
-import { Spinner } from "react-bootstrap";
+// import { Spinner } from "react-bootstrap";
 import { db } from "./Firestore";
 import Select from "react-select";
 
@@ -24,6 +24,7 @@ import Button from "@material-ui/core/Button";
 import Snackbar from "@material-ui/core/Snackbar";
 import IconButton from "@material-ui/core/IconButton";
 import CloseIcon from "@material-ui/icons/Close";
+import Skeleton from "@material-ui/lab/Skeleton";
 
 const analytics = firebase.analytics();
 
@@ -370,22 +371,47 @@ export class SearchAll extends React.Component {
     let result = {
       nearby: [],
     };
+    let skeletons = [];
+    for (let index = 0; index < 12; index++) {
+      skeletons.push(
+        <figure
+          class="card shadow effect-bubba item-card"
+          style={{ margin: "5px", height: "200px" }}
+          onClick={this.handleClick}
+        >
+          <Skeleton width="100%">
+            <div style={{ height: "100px" }} class="card-img-top" alt=""></div>
+          </Skeleton>
+          <Skeleton width="80%">
+            <h3>.</h3>
+          </Skeleton>
+          <Skeleton width="50%">
+            <h3>.</h3>
+          </Skeleton>
+        </figure>
+      );
+    }
     if (this.state.data !== undefined && this.state.retrieved) {
       let filtered = this.state.data;
 
       if (this.state.search.length !== 0) {
         filtered = filtered.filter((d) => {
-          return (
-            d.name.toLowerCase().includes(this.state.search.toLowerCase()) ||
-            d.description
-              .toLowerCase()
-              .includes(this.state.search.toLowerCase()) ||
-            d.description_detail
-              .toLowerCase()
-              .includes(this.state.search.toLowerCase()) ||
-            d.tags.includes(this.state.search.toLowerCase()) ||
-            d.menu_list.includes(this.state.search.toLowerCase())
-          );
+          if (d && d.name && d.description && d.description_detail && d.tags && d.menu_list) {
+            return (
+              d.name.toLowerCase().includes(this.state.search.toLowerCase()) ||
+              d.description
+                .toLowerCase()
+                .includes(this.state.search.toLowerCase()) ||
+              d.description_detail
+                .toLowerCase()
+                .includes(this.state.search.toLowerCase()) ||
+              d.tags.includes(this.state.search.toLowerCase()) ||
+              d.menu_list.includes(this.state.search.toLowerCase())
+            );
+          }
+          else{
+            return false
+          }
         });
       }
 
@@ -625,11 +651,10 @@ export class SearchAll extends React.Component {
                 <span class="mt-5">No Results Found</span>
               )
             ) : (
-              <div class="row h-100 page-container">
-                <div class="col-sm-12 my-auto">
-                  <h3>Loading</h3>
-                  <Spinner class="" animation="grow" />
-                </div>
+              <div class="row justify-content-center mt-4">
+                {/* <h3>Loading</h3> */}
+                {/* <Spinner class="" animation="grow" /> */}
+                {skeletons}
               </div>
             )}
             <ScrollTop>
